@@ -1,4 +1,5 @@
 let config = null;
+let calendarDataMap = {}; // 快取台灣官方行事曆資料 (Key: YYYY-MM-DD, Value: { isHoliday, description })
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', async () => {
@@ -6,10 +7,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const res = await fetch('config.json');
     config = await res.json();
 
-    // 自動讀取當年前後年份的國定假日 API (若網路正常)
+    // 自動讀取當年前後年份的台灣官方行事曆 (Taiwan Calendar / 政府開放資料 123662)
     const currentYear = new Date().getFullYear();
-    await loadAutoHolidays(currentYear);
-    await loadAutoHolidays(currentYear + 1);
+    await loadTaiwanCalendar(currentYear - 1);
+    await loadTaiwanCalendar(currentYear);
+    await loadTaiwanCalendar(currentYear + 1);
 
     initApp();
   } catch (err) {
@@ -19,19 +21,54 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 /**
- * 新增函式：自動線上讀取國定假日 API (如 date.nager.at / 台灣國定假日)
+ * 讀取台灣行政院人事行政總處官方辦公日曆表
+ * 資料來源：政府資料開放平臺 Dataset 123662 & TaiwanCalendar 開放專案
  */
-async function loadAutoHolidays(year) {
+async function loadTaiwanCalendar(year) {
+  // 管道 A: TaiwanCalendar (基於政府 123662 資料集)
   try {
-    const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/TW`);
+    const res = await fetch(`https://raw.githubusercontent.com/ruyut/TaiwanCalendar/master/data/${year}.json`);
     if (res.ok) {
       const data = await res.json();
-      const apiHolidays = data.map(item => item.date);
-      const combined = new Set([...(config.holidays || []), ...apiHolidays]);
-      config.holidays = Array.from(combined);
+      data.forEach(item => {
+        const y = item.date.substring(0, 4);
+        const m = item.date.substring(4, 6);
+        const d = item.date.substring(6, 8);
+        const formattedDate = `${y}-${m}-${d}`;
+        
+        calendarDataMap[formattedDate] = {
+          isHoliday: item.isHoliday,
+          description: item.description || ''
+        };
+      });
+      console.log(`已成功載入 ${year} 年政府辦公日曆表資料 (${data.length} 天)`);
+      return;
     }
   } catch (e) {
-    console.warn(`自動讀取 ${year} 年國定假日 API 失敗，將使用 config.json 的預設假日清單`, e);
+    console.warn(`管道 A (TaiwanCalendar) 載入 ${year} 年失敗，嘗試備援管道`, e);
+  }
+
+  // 管道 B: 政府資料開放平臺 123662 API 備援
+  try {
+    const res = await fetch(`https://data.ntpc.gov.tw/api/datasets/30823960-0934-4062-9f4e-7b32d3d40e5f/json?page=0&size=1000`);
+    if (res.ok) {
+      const data = await res.json();
+      data.forEach(item => {
+        if (!item.date) return;
+        // 轉格式 YYYYMMDD -> YYYY-MM-DD
+        const dateStr = item.date;
+        const formattedDate = dateStr.length === 8 ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : item.date;
+        const isHoliday = item.isHoliday === "是" || item.isHoliday === true || item.isHoliday === "1";
+        
+        calendarDataMap[formattedDate] = {
+          isHoliday: isHoliday,
+          description: item.name || item.description || ''
+        };
+      });
+      console.log(`已成功透過政府 123662 API 載入行事曆資料`);
+    }
+  } catch (e) {
+    console.warn(`管道 B (政府 123662 API) 載入失敗，將使用 config.json 與週末備援`, e);
   }
 }
 
@@ -81,7 +118,8 @@ function initApp() {
       box.style.backgroundColor = '#fef2f2';
       box.style.borderColor = '#fca5a5';
       box.style.color = '#991b1b';
-      box.innerHTML = `🔍 <strong>${specificDate} (${dayOfWeekStr})</strong> 為 ${duty.type === 'weekend' ? '週末假日' : '國定假日/放假日'}，無需值日。`;
+      const desc = duty.description ? ` (${duty.description})` : '';
+      box.innerHTML = `🔍 <strong>${specificDate} (${dayOfWeekStr})</strong> 為 ${duty.type === 'weekend' ? '週末假日' : '國定假日/放假日'}${desc}，無需值日。`;
     } else {
       box.style.backgroundColor = '#ecfdf5';
       box.style.borderColor = '#a7f3d0';
@@ -118,7 +156,6 @@ function changeMonth(offset) {
 }
 
 function renderTodayDuty(todayStr) {
-  const dateObj = new Date(todayStr + 'T00:00:00');
   const dayOfWeek = getDayOfWeekStr(todayStr);
   document.getElementById('today-date-display').innerText = `${todayStr} (星期${dayOfWeek})`;
 
@@ -127,7 +164,8 @@ function renderTodayDuty(todayStr) {
   const noteEl = document.getElementById('today-status-note');
 
   if (!duty.isWorkday) {
-    displayEl.innerHTML = duty.type === 'weekend' ? '🎉 週末放假' : '🏖️ 國定假日 / 放假';
+    const desc = duty.description ? ` - ${duty.description}` : '';
+    displayEl.innerHTML = duty.type === 'weekend' ? '🎉 週末放假' : `🏖️ 國定假日 / 放假${desc}`;
     noteEl.innerText = '今天不需要派駐值日生';
   } else {
     displayEl.innerText = duty.members.join(' + ');
@@ -169,7 +207,8 @@ function renderMonthTable(yearMonthStr) {
     let membersText = duty.members.join(' + ');
 
     if (!duty.isWorkday) {
-      statusText = duty.type === 'weekend' ? '週末' : '國定假日';
+      const holidayDesc = duty.description ? ` (${duty.description})` : '';
+      statusText = duty.type === 'weekend' ? '週末' : `國定假日${holidayDesc}`;
       membersText = '-';
     }
 
@@ -185,20 +224,46 @@ function renderMonthTable(yearMonthStr) {
 }
 
 /**
+ * 判斷單一日期是否為工作日
+ */
+function isWorkday(dateStr, cfg) {
+  if (calendarDataMap[dateStr] !== undefined) {
+    return !calendarDataMap[dateStr].isHoliday;
+  }
+  const dateObj = new Date(dateStr + 'T00:00:00');
+  const dow = dateObj.getDay();
+  const isWeekend = (dow === 0 || dow === 6);
+  const isHoliday = (cfg.holidays && cfg.holidays.includes(dateStr));
+  return (!isWeekend && !isHoliday);
+}
+
+/**
  * Core Algorithm: Calculate Duty Group for any given date
  */
 function calculateDutyForDate(targetDateStr, cfg) {
   const targetDate = new Date(targetDateStr + 'T00:00:00');
   const dayOfWeek = targetDate.getDay();
 
-  // 1. Check Weekend
-  if (dayOfWeek === 0 || dayOfWeek === 6) {
-    return { isWorkday: false, type: 'weekend', members: [] };
-  }
-
-  // 2. Check Excluded Holiday
-  if (cfg.holidays && cfg.holidays.includes(targetDateStr)) {
-    return { isWorkday: false, type: 'holiday', members: [] };
+  // 1. 檢查是否為假日
+  if (calendarDataMap[targetDateStr] !== undefined) {
+    const dayData = calendarDataMap[targetDateStr];
+    if (dayData.isHoliday) {
+      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+      return { 
+        isWorkday: false, 
+        type: isWeekend ? 'weekend' : 'holiday',
+        description: dayData.description,
+        members: [] 
+      };
+    }
+  } else {
+    // 備援判斷
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return { isWorkday: false, type: 'weekend', members: [] };
+    }
+    if (cfg.holidays && cfg.holidays.includes(targetDateStr)) {
+      return { isWorkday: false, type: 'holiday', members: [] };
+    }
   }
 
   const anchorDate = new Date(cfg.anchorDate + 'T00:00:00');
@@ -210,11 +275,7 @@ function calculateDutyForDate(targetDateStr, cfg) {
     let curr = new Date(anchorDate);
     while (curr <= targetDate) {
       const currStr = formatDateYYYYMMDD(curr);
-      const dow = curr.getDay();
-      const isWeekend = (dow === 0 || dow === 6);
-      const isHoliday = (cfg.holidays && cfg.holidays.includes(currStr));
-
-      if (!isWeekend && !isHoliday) {
+      if (isWorkday(currStr, cfg)) {
         workdayCount++;
       }
       curr.setDate(curr.getDate() + 1);
@@ -232,11 +293,7 @@ function calculateDutyForDate(targetDateStr, cfg) {
     curr.setDate(curr.getDate() - 1);
     while (curr >= targetDate) {
       const currStr = formatDateYYYYMMDD(curr);
-      const dow = curr.getDay();
-      const isWeekend = (dow === 0 || dow === 6);
-      const isHoliday = (cfg.holidays && cfg.holidays.includes(currStr));
-
-      if (!isWeekend && !isHoliday) {
+      if (isWorkday(currStr, cfg)) {
         workdayCount++;
       }
       curr.setDate(curr.getDate() - 1);
