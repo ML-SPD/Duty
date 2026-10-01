@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>每日值日生自動輪播系統</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>📅 每日值日生輪播系統</h1>
+      <p class="subtitle">自動計算工作日值班人員，支援預覽當月與下個月名單</p>
+    </header>
+
+    <!-- Today's Duty Banner -->
+    <section class="card hero-card">
+      <div class="card-tag">今日值日生</div>
+      <div class="today-date" id="today-date-display">載入中...</div>
+      <div class="duty-members" id="today-duty-display">
+        <span class="loading">正在計算值日生名單...</span>
+      </div>
+      <div class="status-note" id="today-status-note"></div>
+    </section>
+
+    <!-- Date Lookup / Filter -->
+    <section class="card controls-card">
+      <div class="control-group">
+        <label for="month-select">🗓️ 選擇查看月份：</label>
+        <input type="month" id="month-select">
+      </div>
+      <div class="control-group">
+        <label for="specific-date">🔍 查詢特定日期：</label>
+        <input type="date" id="specific-date">
+        <button id="btn-search-date" class="btn-primary">查詢</button>
+      </div>
+    </section>
+
+    <!-- Search Result Modal or Alert (if specific date queried) -->
+    <div id="search-result-box" class="search-result-box hidden"></div>
+
+    <!-- Monthly Schedule Table -->
+    <section class="card table-card">
+      <div class="table-header">
+        <h2 id="table-title">值日生輪換表</h2>
+        <div class="btn-group">
+          <button id="btn-prev-month" class="btn-secondary">◀ 上個月</button>
+          <button id="btn-this-month" class="btn-secondary">本月</button>
+          <button id="btn-next-month" class="btn-secondary">下個月 ▶</button>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>星期</th>
+              <th>值班類型</th>
+              <th>值日生人員</th>
+            </tr>
+          </thead>
+          <tbody id="schedule-tbody">
+            <!-- Dynamic rows -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Footer & Admin Note -->
+    <footer class="footer">
+      <p>💡 提示：如需新增或調整員工名單，只需修改專案目錄下的 <code>config.json</code> 檔案即可完成更新。</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
