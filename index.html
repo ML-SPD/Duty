@@ -3,8 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>每日值日生自動輪播系統</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.0.3">
 </head>
 <body>
   <div class="container">
@@ -21,6 +24,24 @@
         <span class="loading">正在計算值日生名單...</span>
       </div>
       <div class="status-note" id="today-status-note"></div>
+    </section>
+
+    <!-- Notification Settings Card -->
+    <section class="card notification-card">
+      <div class="notification-content">
+        <div class="notification-text">
+          <strong>🔔 每日 11:30 值日生推播提醒</strong>
+          <p class="notification-desc">開啟後，於有值班人員的工作日早上 11:30 自動發送提醒通知。</p>
+        </div>
+        <div class="notification-actions">
+          <button id="btn-test-notification" class="btn-secondary btn-sm hidden">測試推播</button>
+          <label class="switch">
+            <input type="checkbox" id="notification-toggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+      <div id="notification-status-msg" class="notification-status-msg"></div>
     </section>
 
     <!-- Date Lookup / Filter -->
@@ -64,14 +85,18 @@
           </tbody>
         </table>
       </div>
+      <div class="table-footer-controls">
+        <div class="btn-group">
+          <button id="btn-prev-month-bottom" class="btn-secondary">◀ 上個月</button>
+          <button id="btn-this-month-bottom" class="btn-secondary">本月</button>
+          <button id="btn-next-month-bottom" class="btn-secondary">下個月 ▶</button>
+        </div>
+      </div>
     </section>
 
-    <!-- Footer & Admin Note -->
-    <footer class="footer">
-      <p>💡 提示：如需新增或調整員工名單，只需修改專案目錄下的 <code>config.json</code> 檔案即可完成更新。</p>
-    </footer>
+    <footer class="footer"></footer>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1.0.3"></script>
 </body>
 </html>

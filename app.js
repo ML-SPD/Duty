@@ -1,18 +1,26 @@
 let config = null;
 let calendarDataMap = {}; // 快取台灣官方行事曆資料 (Key: YYYY-MM-DD, Value: { isHoliday, description })
 
+// Service Worker 註冊
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(err => console.warn('ServiceWorker 註冊失敗:', err));
+}
+
 // Initialize App
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    const res = await fetch('config.json');
+    const res = await fetch('config.json?t=' + Date.now());
     config = await res.json();
 
-    // 自動讀取當年前後年份的台灣官方行事曆 (Taiwan Calendar / 政府開放資料 123662)
-    const currentYear = new Date().getFullYear();
-    await loadTaiwanCalendar(currentYear - 1);
-    await loadTaiwanCalendar(currentYear);
-    await loadTaiwanCalendar(currentYear + 1);
+    // 1. 先根據 config.json 立即渲染畫面
+    initApp();
+    setupNotificationSystem();
 
+    // 2. 背景非同步讀取台灣官方線上行事曆 API
+    const currentYear = new Date().getFullYear();
+    await loadTaiwanCalendar(currentYear);
+    
+    // 3. 讀取完線上 API 後再次更新畫面
     initApp();
   } catch (err) {
     console.error('無法載入 config.json:', err);
@@ -22,17 +30,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 /**
  * 讀取台灣行政院人事行政總處官方辦公日曆表
- * 資料來源：880831ian/taiwan-calendar & 政府資料開放平臺 Dataset 123662
  */
 async function loadTaiwanCalendar(year) {
-  // 管道 1: 880831ian/taiwan-calendar 官方 API (提供完整 365 天國定假日、補班日與國慶補假)
   try {
     const res = await fetch(`https://api.pin-yi.me/taiwan-calendar/${year}`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         data.forEach(item => {
-          // item.date 是 "20261009" 或 item.date_format 是 "2026/10/09"
           const y = item.date.substring(0, 4);
           const m = item.date.substring(4, 6);
           const d = item.date.substring(6, 8);
@@ -43,59 +48,12 @@ async function loadTaiwanCalendar(year) {
             description: item.caption || item.description || ''
           };
         });
-        console.log(`已成功透過 880831ian API 載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
+        console.log(`已成功載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
         return;
       }
     }
   } catch (e) {
-    console.warn(`管道 1 (pin-yi.me API) 載入 ${year} 年失敗，嘗試管道 2`, e);
-  }
-
-  // 管道 2: TaiwanCalendar GitHub Raw 鏡像
-  try {
-    const res = await fetch(`https://raw.githubusercontent.com/ruyut/TaiwanCalendar/master/data/${year}.json`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        data.forEach(item => {
-          const y = item.date.substring(0, 4);
-          const m = item.date.substring(4, 6);
-          const d = item.date.substring(6, 8);
-          const formattedDate = `${y}-${m}-${d}`;
-          
-          calendarDataMap[formattedDate] = {
-            isHoliday: item.isHoliday === true || item.isHoliday === "true",
-            description: item.description || item.caption || ''
-          };
-        });
-        console.log(`已成功載入 ${year} 年政府辦公日曆表資料 (${data.length} 天)`);
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn(`管道 2 (TaiwanCalendar Raw) 載入 ${year} 年失敗，嘗試備援管道`, e);
-  }
-
-  // 管道 3: 政府資料開放平臺 123662 API 備援
-  try {
-    const res = await fetch(`https://data.ntpc.gov.tw/api/datasets/30823960-0934-4062-9f4e-7b32d3d40e5f/json?page=0&size=1000`);
-    if (res.ok) {
-      const data = await res.json();
-      data.forEach(item => {
-        if (!item.date) return;
-        const dateStr = item.date;
-        const formattedDate = dateStr.length === 8 ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : item.date;
-        const isHoliday = item.isHoliday === "是" || item.isHoliday === true || item.isHoliday === "1";
-        
-        calendarDataMap[formattedDate] = {
-          isHoliday: isHoliday,
-          description: item.name || item.description || ''
-        };
-      });
-      console.log(`已成功透過政府 123662 API 載入行事曆資料`);
-    }
-  } catch (e) {
-    console.warn(`管道 3 (政府 123662 API) 載入失敗，將使用 config.json 與週末備援`, e);
+    console.warn(`線上 API 載入失敗，使用 config.json 與備援管道`, e);
   }
 }
 
@@ -113,25 +71,35 @@ function initApp() {
   renderMonthTable(currentMonthStr);
 
   // Setup Event Listeners
+  setupEventListeners();
+}
+
+let listenersInitialized = false;
+function setupEventListeners() {
+  if (listenersInitialized) return;
+  listenersInitialized = true;
+
   document.getElementById('month-select').addEventListener('change', (e) => {
     if (e.target.value) {
       renderMonthTable(e.target.value);
     }
   });
 
-  document.getElementById('btn-this-month').addEventListener('click', () => {
+  const goToThisMonth = () => {
     const monthStr = getTodayYYYYMMDD().substring(0, 7);
     document.getElementById('month-select').value = monthStr;
     renderMonthTable(monthStr);
-  });
+  };
 
-  document.getElementById('btn-prev-month').addEventListener('click', () => {
-    changeMonth(-1);
-  });
+  // 頂部按鈕事件
+  document.getElementById('btn-this-month').addEventListener('click', goToThisMonth);
+  document.getElementById('btn-prev-month').addEventListener('click', () => changeMonth(-1));
+  document.getElementById('btn-next-month').addEventListener('click', () => changeMonth(1));
 
-  document.getElementById('btn-next-month').addEventListener('click', () => {
-    changeMonth(1);
-  });
+  // 底部按鈕事件
+  document.getElementById('btn-this-month-bottom').addEventListener('click', goToThisMonth);
+  document.getElementById('btn-prev-month-bottom').addEventListener('click', () => changeMonth(-1));
+  document.getElementById('btn-next-month-bottom').addEventListener('click', () => changeMonth(1));
 
   document.getElementById('btn-search-date').addEventListener('click', () => {
     const specificDate = document.getElementById('specific-date').value;
@@ -154,6 +122,125 @@ function initApp() {
       box.innerHTML = `🔍 <strong>${specificDate} (${dayOfWeekStr})</strong> 值日生：<strong>${duty.members.join(' + ')}</strong>`;
     }
   });
+}
+
+/**
+ * 推播通知系統 (Web Notification API)
+ */
+let notificationTimer = null;
+
+function setupNotificationSystem() {
+  const toggle = document.getElementById('notification-toggle');
+  const testBtn = document.getElementById('btn-test-notification');
+  const statusMsg = document.getElementById('notification-status-msg');
+
+  if (!('Notification' in window)) {
+    statusMsg.innerText = '⚠️ 您的瀏覽器不支援 Web 推播通知功能。';
+    toggle.disabled = true;
+    return;
+  }
+
+  const isSavedEnabled = localStorage.getItem('duty_notification_enabled') === 'true';
+
+  if (isSavedEnabled && Notification.permission === 'granted') {
+    toggle.checked = true;
+    testBtn.classList.remove('hidden');
+    statusMsg.innerHTML = '✅ 每日 11:30 推播提醒已開啟。';
+    scheduleDaily1130Check();
+  } else {
+    toggle.checked = false;
+    testBtn.classList.add('hidden');
+  }
+
+  toggle.addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        localStorage.setItem('duty_notification_enabled', 'true');
+        testBtn.classList.remove('hidden');
+        statusMsg.innerHTML = '✅ 成功開啟通知！系統將於有值日生的日子每日 11:30 發送提醒。';
+        sendDutyNotification('🎉 推播提醒開啟成功', '系統已設定於每個工作日 11:30 自動發送值日生提醒！');
+        scheduleDaily1130Check();
+      } else {
+        toggle.checked = false;
+        localStorage.setItem('duty_notification_enabled', 'false');
+        testBtn.classList.add('hidden');
+        statusMsg.innerHTML = '❌ 瀏覽器通知權限被拒絕。請點選瀏覽器網址列旁的鎖頭圖示開啟通知權限。';
+      }
+    } else {
+      localStorage.setItem('duty_notification_enabled', 'false');
+      testBtn.classList.add('hidden');
+      statusMsg.innerText = '已關閉每日推播提醒。';
+      if (notificationTimer) clearTimeout(notificationTimer);
+    }
+  });
+
+  testBtn.addEventListener('click', () => {
+    const todayStr = getTodayYYYYMMDD();
+    const duty = calculateDutyForDate(todayStr, config);
+    if (duty.isWorkday) {
+      sendDutyNotification('📅 今日值日生測試推播 (11:30)', `今日值日生：【${duty.members.join(' + ')}】`);
+    } else {
+      sendDutyNotification('🏖️ 今日放假無值日生', `今天（${todayStr}）為假日，無需派遣值日生。`);
+    }
+  });
+}
+
+function scheduleDaily1130Check() {
+  if (notificationTimer) clearTimeout(notificationTimer);
+
+  const now = new Date();
+  const target = new Date();
+  target.setHours(11, 30, 0, 0);
+
+  // 若當天 11:30 已過，則設定目標時間為明天 11:30
+  if (now >= target) {
+    target.setDate(target.getDate() + 1);
+  }
+
+  const delay = target.getTime() - now.getTime();
+  console.log(`下一次 11:30 提醒將在 ${(delay / 1000 / 60).toFixed(1)} 分鐘後觸發`);
+
+  notificationTimer = setTimeout(() => {
+    trigger1130NotificationCheck();
+    scheduleDaily1130Check(); // 循環設定下一天
+  }, delay);
+}
+
+function trigger1130NotificationCheck() {
+  if (localStorage.getItem('duty_notification_enabled') !== 'true') return;
+  if (Notification.permission !== 'granted') return;
+
+  const todayStr = getTodayYYYYMMDD();
+  const duty = calculateDutyForDate(todayStr, config);
+
+  if (duty.isWorkday && duty.members && duty.members.length > 0) {
+    sendDutyNotification(
+      '📅 今日值日生提醒 (11:30)',
+      `今天（${todayStr}）的值日生是：【${duty.members.join(' + ')}】，請記得進行值日工作！`
+    );
+  }
+}
+
+function sendDutyNotification(title, body) {
+  if (Notification.permission !== 'granted') return;
+
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then(reg => {
+      reg.showNotification(title, {
+        body: body,
+        icon: 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png',
+        badge: 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png',
+        tag: 'duty-notification',
+        renotify: true
+      });
+    });
+  } else {
+    new Notification(title, {
+      body: body,
+      icon: 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png'
+    });
+  }
 }
 
 function getTodayYYYYMMDD() {
@@ -271,7 +358,7 @@ function calculateDutyForDate(targetDateStr, cfg) {
   const targetDate = new Date(targetDateStr + 'T00:00:00');
   const dayOfWeek = targetDate.getDay();
 
-  // 1. 檢查是否為假日
+  // 1. 優先檢查是否在線上 API 資料快取中
   if (calendarDataMap[targetDateStr] !== undefined) {
     const dayData = calendarDataMap[targetDateStr];
     if (dayData.isHoliday) {
@@ -279,17 +366,22 @@ function calculateDutyForDate(targetDateStr, cfg) {
       return { 
         isWorkday: false, 
         type: isWeekend ? 'weekend' : 'holiday',
-        description: dayData.description,
+        description: dayData.description || (cfg.holidays.includes(targetDateStr) ? '國定假日' : ''),
         members: [] 
       };
     }
   } else {
-    // 備援判斷
+    // 2. 備援判斷：檢查週末與 config.json 靜態假日陣列
     if (dayOfWeek === 0 || dayOfWeek === 6) {
       return { isWorkday: false, type: 'weekend', members: [] };
     }
     if (cfg.holidays && cfg.holidays.includes(targetDateStr)) {
-      return { isWorkday: false, type: 'holiday', members: [] };
+      return { 
+        isWorkday: false, 
+        type: 'holiday', 
+        description: '國定假日',
+        members: [] 
+      };
     }
   }
 
