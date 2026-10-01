@@ -16,9 +16,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     initApp();
     setupNotificationSystem();
 
-    // 2. 背景非同步讀取台灣官方線上行事曆 API
+    // 2. 背景非同步讀取台灣官方線上行事曆 API (包含三重管道備援)
     const currentYear = new Date().getFullYear();
+    await loadTaiwanCalendar(currentYear - 1);
     await loadTaiwanCalendar(currentYear);
+    await loadTaiwanCalendar(currentYear + 1);
     
     // 3. 讀取完線上 API 後再次更新畫面
     initApp();
@@ -30,8 +32,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 /**
  * 讀取台灣行政院人事行政總處官方辦公日曆表
+ * 包含完整三重管道備援 (880831ian / TaiwanCalendar Raw / 政府開放資料 123662)
  */
 async function loadTaiwanCalendar(year) {
+  // 管道 1: 880831ian/taiwan-calendar 官方 API
   try {
     const res = await fetch(`https://api.pin-yi.me/taiwan-calendar/${year}`);
     if (res.ok) {
@@ -48,12 +52,61 @@ async function loadTaiwanCalendar(year) {
             description: item.caption || item.description || ''
           };
         });
-        console.log(`已成功載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
+        console.log(`已成功透過 管道 1 (880831ian API) 載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
         return;
       }
     }
   } catch (e) {
-    console.warn(`線上 API 載入失敗，使用 config.json 與備援管道`, e);
+    console.warn(`管道 1 (pin-yi.me API) 載入 ${year} 年失敗，嘗試管道 2`, e);
+  }
+
+  // 管道 2: TaiwanCalendar GitHub Raw 鏡像
+  try {
+    const res = await fetch(`https://raw.githubusercontent.com/ruyut/TaiwanCalendar/master/data/${year}.json`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        data.forEach(item => {
+          const y = item.date.substring(0, 4);
+          const m = item.date.substring(4, 6);
+          const d = item.date.substring(6, 8);
+          const formattedDate = `${y}-${m}-${d}`;
+          
+          calendarDataMap[formattedDate] = {
+            isHoliday: item.isHoliday === true || item.isHoliday === "true",
+            description: item.description || item.caption || ''
+          };
+        });
+        console.log(`已成功透過 管道 2 (TaiwanCalendar Raw) 載入 ${year} 年政府辦公日曆表資料 (${data.length} 天)`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn(`管道 2 (TaiwanCalendar Raw) 載入 ${year} 年失敗，嘗試管道 3`, e);
+  }
+
+  // 管道 3: 政府資料開放平臺 Dataset 123662 API 備援
+  try {
+    const res = await fetch(`https://data.ntpc.gov.tw/api/datasets/30823960-0934-4062-9f4e-7b32d3d40e5f/json?page=0&size=1000`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        data.forEach(item => {
+          if (!item.date) return;
+          const dateStr = item.date;
+          const formattedDate = dateStr.length === 8 ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : item.date;
+          const isHoliday = item.isHoliday === "是" || item.isHoliday === true || item.isHoliday === "1";
+          
+          calendarDataMap[formattedDate] = {
+            isHoliday: isHoliday,
+            description: item.name || item.description || ''
+          };
+        });
+        console.log(`已成功透過 管道 3 (政府 123662 API) 載入行事曆資料`);
+      }
+    }
+  } catch (e) {
+    console.warn(`管道 3 (政府 123662 API) 載入失敗，將使用 config.json 與週末備援`, e);
   }
 }
 
@@ -193,7 +246,6 @@ function scheduleDaily1130Check() {
   const target = new Date();
   target.setHours(11, 30, 0, 0);
 
-  // 若當天 11:30 已過，則設定目標時間為明天 11:30
   if (now >= target) {
     target.setDate(target.getDate() + 1);
   }
@@ -203,7 +255,7 @@ function scheduleDaily1130Check() {
 
   notificationTimer = setTimeout(() => {
     trigger1130NotificationCheck();
-    scheduleDaily1130Check(); // 循環設定下一天
+    scheduleDaily1130Check();
   }, delay);
 }
 
