@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initApp();
     setupNotificationSystem();
 
-    // 2. 背景非同步讀取台灣官方線上行事曆 API (包含三重管道備援)
+    // 2. 背景非同步讀取台灣官方線上行事曆 API (優先使用 100% 支援 CORS 的全球 CDN)
     const currentYear = new Date().getFullYear();
     await loadTaiwanCalendar(currentYear - 1);
     await loadTaiwanCalendar(currentYear);
@@ -32,12 +32,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 /**
  * 讀取台灣行政院人事行政總處官方辦公日曆表
- * 包含完整三重管道備援 (880831ian / TaiwanCalendar Raw / 政府開放資料 123662)
+ * 優先使用 100% 支援跨域 (CORS Allow-Origin: *) 的 jsDelivr CDN & GitHub Raw 管道
  */
 async function loadTaiwanCalendar(year) {
-  // 管道 1: 880831ian/taiwan-calendar 官方 API
+  // 管道 1: jsDelivr CDN (官方明確支援 CORS Access-Control-Allow-Origin: *，不會報錯且速度最快)
   try {
-    const res = await fetch(`https://api.pin-yi.me/taiwan-calendar/${year}`);
+    const res = await fetch(`https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data/${year}.json`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -49,18 +49,18 @@ async function loadTaiwanCalendar(year) {
           
           calendarDataMap[formattedDate] = {
             isHoliday: item.isHoliday === true || item.isHoliday === "true",
-            description: item.caption || item.description || ''
+            description: item.description || item.caption || ''
           };
         });
-        console.log(`已成功透過 管道 1 (880831ian API) 載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
+        console.log(`已成功透過 管道 1 (jsDelivr CDN) 載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
         return;
       }
     }
   } catch (e) {
-    console.warn(`管道 1 (pin-yi.me API) 載入 ${year} 年失敗，嘗試管道 2`, e);
+    console.warn(`管道 1 (jsDelivr) 載入 ${year} 年失敗，嘗試管道 2`, e);
   }
 
-  // 管道 2: TaiwanCalendar GitHub Raw 鏡像
+  // 管道 2: GitHub Raw 鏡像 (同樣 100% 支援 CORS 跨域存取)
   try {
     const res = await fetch(`https://raw.githubusercontent.com/ruyut/TaiwanCalendar/master/data/${year}.json`);
     if (res.ok) {
@@ -77,36 +77,37 @@ async function loadTaiwanCalendar(year) {
             description: item.description || item.caption || ''
           };
         });
-        console.log(`已成功透過 管道 2 (TaiwanCalendar Raw) 載入 ${year} 年政府辦公日曆表資料 (${data.length} 天)`);
+        console.log(`已成功透過 管道 2 (GitHub Raw) 載入 ${year} 年政府辦公日曆表資料 (${data.length} 天)`);
         return;
       }
     }
   } catch (e) {
-    console.warn(`管道 2 (TaiwanCalendar Raw) 載入 ${year} 年失敗，嘗試管道 3`, e);
+    console.warn(`管道 2 (GitHub Raw) 載入 ${year} 年失敗，嘗試管道 3`, e);
   }
 
-  // 管道 3: 政府資料開放平臺 Dataset 123662 API 備援
+  // 管道 3: 880831ian / pin-yi.me API 備援
   try {
-    const res = await fetch(`https://data.ntpc.gov.tw/api/datasets/30823960-0934-4062-9f4e-7b32d3d40e5f/json?page=0&size=1000`);
+    const res = await fetch(`https://api.pin-yi.me/taiwan-calendar/${year}`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         data.forEach(item => {
-          if (!item.date) return;
-          const dateStr = item.date;
-          const formattedDate = dateStr.length === 8 ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : item.date;
-          const isHoliday = item.isHoliday === "是" || item.isHoliday === true || item.isHoliday === "1";
+          const y = item.date.substring(0, 4);
+          const m = item.date.substring(4, 6);
+          const d = item.date.substring(6, 8);
+          const formattedDate = `${y}-${m}-${d}`;
           
           calendarDataMap[formattedDate] = {
-            isHoliday: isHoliday,
-            description: item.name || item.description || ''
+            isHoliday: item.isHoliday === true || item.isHoliday === "true",
+            description: item.caption || item.description || ''
           };
         });
-        console.log(`已成功透過 管道 3 (政府 123662 API) 載入行事曆資料`);
+        console.log(`已成功透過 管道 3 (880831ian API) 載入 ${year} 年台灣官方行事曆資料 (${data.length} 天)`);
+        return;
       }
     }
   } catch (e) {
-    console.warn(`管道 3 (政府 123662 API) 載入失敗，將使用 config.json 與週末備援`, e);
+    console.warn(`管道 3 (pin-yi.me API) 載入失敗，將使用 config.json 靜態假日備援`, e);
   }
 }
 
