@@ -1,5 +1,8 @@
 let config = null;
 let calendarDataMap = {}; // 快取台灣官方行事曆資料 (Key: YYYY-MM-DD, Value: { isHoliday, description })
+let lastRenderedDate = ''; // 紀錄上次渲染畫面時的日期 (YYYY-MM-DD)
+let midnightTimer = null; // 跨夜自動刷新計時器
+let autoRefreshListenersInitialized = false; // 避免重複註冊 auto-refresh 事件監聽器
 
 // Service Worker 註冊
 if ('serviceWorker' in navigator) {
@@ -24,6 +27,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 3. 讀取完線上 API 後再次更新畫面
     initApp();
+
+    // 4. 設定跨日自動刷新與頁面可見性/焦點恢復監聽
+    setupAutoRefreshOnDateChange();
   } catch (err) {
     console.error('無法載入 config.json:', err);
     document.getElementById('today-duty-display').innerHTML = '<span style="color:red;">載入設定檔失敗</span>';
@@ -113,6 +119,7 @@ async function loadTaiwanCalendar(year) {
 
 function initApp() {
   const todayStr = getTodayYYYYMMDD();
+  lastRenderedDate = todayStr;
   
   // Set current month in picker
   const currentMonthStr = todayStr.substring(0, 7); // YYYY-MM
@@ -485,4 +492,62 @@ function formatDateYYYYMMDD(dateObj) {
   const month = String(dateObj.getMonth() + 1).padStart(2, '0');
   const day = String(dateObj.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * 跨日自動刷新與頁面可見性/焦點恢復監聽系統
+ */
+function setupAutoRefreshOnDateChange() {
+  // 1. 排定午夜跨日 (00:00:01) 自動刷新
+  scheduleMidnightRefresh();
+
+  if (autoRefreshListenersInitialized) return;
+  autoRefreshListenersInitialized = true;
+
+  // 2. 監聽頁面可見性改變 (例如從其他分頁切回，或裝置從休眠狀態喚醒)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      checkAndRefreshIfDateChanged();
+    }
+  });
+
+  // 3. 監聽視窗焦點獲得
+  window.addEventListener('focus', () => {
+    checkAndRefreshIfDateChanged();
+  });
+}
+
+/**
+ * 檢查系統日期是否改變，若改變則自動重新初始化畫面與更新推播排程
+ */
+function checkAndRefreshIfDateChanged() {
+  const todayStr = getTodayYYYYMMDD();
+  if (lastRenderedDate && todayStr !== lastRenderedDate) {
+    console.log(`[Auto Refresh] 偵測到日期已變更 (${lastRenderedDate} -> ${todayStr})，正在自動更新畫面...`);
+    initApp();
+    
+    // 如果開啟了每日推播，重新排定當日 11:30 推播通知
+    if (localStorage.getItem('duty_notification_enabled') === 'true' && Notification.permission === 'granted') {
+      scheduleDaily1130Check();
+    }
+  }
+}
+
+/**
+ * 計算離下一個午夜 (00:00:01) 的時間差距，設定計時器於跨夜時刷新
+ */
+function scheduleMidnightRefresh() {
+  if (midnightTimer) clearTimeout(midnightTimer);
+
+  const now = new Date();
+  // 將目標設為隔天凌晨 00:00:01
+  const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+  const delay = nextMidnight.getTime() - now.getTime();
+
+  console.log(`[Auto Refresh] 下一次跨日自動更新排定在 ${(delay / 1000 / 3600).toFixed(2)} 小時後 (00:00:01)`);
+
+  midnightTimer = setTimeout(() => {
+    checkAndRefreshIfDateChanged();
+    scheduleMidnightRefresh(); // 繼續排定下一天的午夜計時器
+  }, delay);
 }
